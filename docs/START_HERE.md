@@ -123,7 +123,9 @@ default-address devices and expect them to work independently.
 Keep `AllowMotorMotion = false` and `NavigationCalibrated = false` in Config.h.
 Disconnect motor power while uploading. Hold the stationary chassis still
 during startup gyro calibration: about 1.2 seconds of fresh samples, plus sensor
-initialization. Install the two ToF libraries listed in README.md before building.
+initialization. For VS Code, follow [VSCODE_SETUP.md](VSCODE_SETUP.md): PlatformIO
+installs the two ToF libraries automatically. For Arduino IDE, install them
+through Library Manager as described in README.md.
 
 At 115200 baud the telemetry resembles:
 

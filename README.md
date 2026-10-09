@@ -1,5 +1,6 @@
 # Micromouse: wall-following starter
 
+For **Visual Studio Code**, start with [docs/VSCODE_SETUP.md](docs/VSCODE_SETUP.md).
 For Kohsei's draft sketch, start with [docs/CONTINUE_YOUR_SKETCH.md](docs/CONTINUE_YOUR_SKETCH.md),
 then follow [docs/START_HERE.md](docs/START_HERE.md). This is a first implementation
 updated against the team's nine-page parts inventory, not a robot that has been physically tested.
@@ -43,6 +44,8 @@ been pushed to GitHub and existing Main.c/README.md contents were not changed.
 
 | File | Responsibility |
 | --- | --- |
+| platformio.ini | Pinned ESP32 PlatformIO build, sensor dependencies and serial settings |
+| src/main.cpp | VS Code/PlatformIO entry point compiling the same firmware sketch |
 | firmware/Micromouse/Micromouse.ino | Startup, serial commands, telemetry and optional start button |
 | firmware/Micromouse/Config.h | Pins, safety gates and calibration constants |
 | firmware/Micromouse/Sensors.h | Three ToFs, gyro calibration/yaw and floor reflectance |
@@ -55,7 +58,17 @@ been pushed to GitHub and existing Main.c/README.md contents were not changed.
 | docs/FirstUpload.ino.txt | Optional smaller sensor-only sketch; use with the supplied headers |
 | docs/TEST_LOG.md | Reproducible physical-test record |
 
-## Arduino IDE
+## Visual Studio Code / PlatformIO
+
+Open this folder (the one containing `platformio.ini`) in local VS Code and
+install the official PlatformIO IDE extension. Follow
+[docs/VSCODE_SETUP.md](docs/VSCODE_SETUP.md) for Windows build, COM port upload
+and sensor tests. The first build installs the ESP32 tools and both libraries.
+The supplied generic `esp32dev` profile assumes classic ESP32 with 4 MB flash;
+verify the exact development board. Keep both motion/calibration gates false
+for the first upload and disconnect motor power.
+
+## Arduino IDE (alternative)
 
 1. Install/select the Espressif ESP32 board package and the exact board you own.
 2. Install **Adafruit VL53L0X** and **VL53L1X by Pololu** through Library Manager,
@@ -82,8 +95,8 @@ g++ -std=c++11 -Wall -Wextra -Werror -pedantic tests/left_navigation_test.cpp -o
 /tmp/micromouse_left_test
 ```
 
-Codespaces is useful for editing and these tests. Uploading over USB is simplest
-from Arduino IDE on the computer physically connected to the ESP32.
+Codespaces is useful for editing and these tests. For USB upload, use local
+VS Code with PlatformIO or Arduino IDE on the computer connected to the ESP32.
 
 ## Important limitations
 

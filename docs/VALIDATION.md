@@ -20,6 +20,10 @@
 - The complete .ino and headers passed C++11 syntax checks for both the 2.x
   and 3.x PWM code paths against compile-only hardware interface doubles.
   Those doubles were not packaged as production code or substituted for real libraries.
+- The new PlatformIO `src/main.cpp` entry point passed those same two syntax
+  checks. The INI file parsed successfully; its environment, Arduino framework,
+  classic ESP32 board profile, dependency names and 115200 monitor settings
+  were checked. These checks do not download dependencies or link ESP32 firmware.
 - The smaller docs/FirstUpload.ino.txt sensor-only sketch passed the same interface
   syntax check with all required headers present.
 - Public vendor documentation was checked for the distance/PWM APIs and gyro
@@ -30,13 +34,15 @@
 
 - Actual compilation/linking against an installed ESP32 Arduino core and real
   Adafruit/Pololu libraries. Arduino CLI/PlatformIO and those dependencies were not installed.
+  A PlatformIO configuration is now included, but a successful real PlatformIO
+  build has not been established in this environment.
 - Flashing the team's ESP32, verifying exact component variants, or motor power tests.
 - Real ToF optical tests, floor IR calibration, gyro drift/turn accuracy tests.
 - Chassis clearance, junction approach/exit calibration, speed or maze-completion tests.
 - Reading the current live GitHub repository or changing/pushing existing files.
 
 Desktop logic tests cannot prove real-world maze completion or collision avoidance.
-The next required check is an Arduino IDE build for the exact board, followed by
+The next required check is a PlatformIO or Arduino IDE build for the exact board, followed by
 the ordered hardware checklist in START_HERE.md with motor power initially off.
 
 The revised package changes XSHUT to GPIO13/14/23, KY-033 OUT to GPIO32, and
