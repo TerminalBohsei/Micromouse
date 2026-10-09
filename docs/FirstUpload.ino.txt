@@ -1,0 +1,35 @@
+// FIRST SESSION: paste this into Micromouse.ino, keeping all supplied .h files.
+// This sketch reads sensors only. Keep the motor supply disconnected.
+#include "Config.h"
+#include "Sensors.h"
+
+Sensors sensors;
+bool sensorsReady = false;
+uint32_t lastPrintMs = 0;
+
+void setup()
+{
+    Serial.begin(115200);
+    Serial.println("Keep the robot still while the gyro calibrates.");
+    sensorsReady = sensors.Begin();
+    sensors.PrintModels();
+    if( !sensorsReady ) Serial.println(sensors.error);
+}
+
+void printReading(const SensorFrame& reading)
+{
+    Serial.printf("Left=%u mm | Front=%u mm | Right=%u mm | yaw=%.1f | white=%d | valid=%d\n",
+                  sensors.range[0].mm, sensors.range[1].mm, sensors.range[2].mm,
+                  reading.yawDeg, reading.whiteFloor, reading.healthy);
+}
+
+void loop()
+{
+    if( !sensorsReady ) return;
+    SensorFrame reading = sensors.Read();
+    if( reading.nowMs - lastPrintMs >= 200 )
+    {
+        lastPrintMs = reading.nowMs;
+        printReading(reading);
+    }
+}
