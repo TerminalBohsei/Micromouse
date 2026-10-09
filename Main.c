@@ -9,22 +9,18 @@ or just the whole code is terrible lemme know - Kohsei*/
 //Pin number hasn't been added because idk what pins align with which ones
 //                        MODULE PINS
 //MOTOR SPEED CONTROL
-#define motor1pin1 
-#define motor1pin2 
+#define MOTOR1PIN1 11
+#define MOTOR1PIN214
 
-#define motor2pin1 
-#define motor2pin2 
+#define MOTOR2PIN1 12
+#define MOTOR2PIN2 16
 
-//TIME OF FLIGHT SENSORS
-#define toflsendpin1
-#define toflrecpin2
+//TIME OF FLIGHT SENSORS - Data
+#define LTOFSDA 33
+#define MTOFSDA 33
+#define RTOFSDA 33
 
-#define tofmsendpin1
-#define tofmrecpin2
-
-#define tofrsendpin1
-#define tofrrecpin2
-
+#define SCL 36
 
 void setup(){
     Serial.begin(9600);
