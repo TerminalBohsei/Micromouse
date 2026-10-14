@@ -1,121 +1,88 @@
-# Micromouse: wall-following starter
+# Micromouse
 
-For **Visual Studio Code**, start with [docs/VSCODE_SETUP.md](docs/VSCODE_SETUP.md).
-For Kohsei's draft sketch, start with [docs/CONTINUE_YOUR_SKETCH.md](docs/CONTINUE_YOUR_SKETCH.md),
-then follow [docs/START_HERE.md](docs/START_HERE.md). This is a first implementation
-updated against the team's nine-page parts inventory, not a robot that has been physically tested.
+A self-guiding maze robot. An ESP32 reads three Time-of-Flight (ToF) sensors
+and a gyro, follows the **left-hand wall**, and stops when a floor IR sensor
+sees the end-zone. **Goal:** reach the end-zone as fast as possible, in a
+single attempt, without touching the walls (contact = time penalty).
 
-## Selected parts from the inventory
+## Hardware (from the lab parts list)
 
-| Function | Use | Firmware support |
-| --- | --- | --- |
-| Controller | ESP32 development board; inventory photo shows WROVER-IE | Classic ESP32, pins avoid GPIO16/17 reserved for PSRAM |
-| Drive | Two TT geared DC motors and wheels, plus a suitable passive support | Differential steering through the L298N |
-| Motor driver | L298N module | Independent ENA/ENB PWM; remove those two jumpers |
-| Wall distances | Three breakouts labelled VL53L0/1XV2, with XSHUT | Detects each VL53L0X or VL53L1X at boot |
-| Turns | ONE MPU-9250/6500 module, or the Adafruit ICM-20948 breakout | Detects MPU-6500/9250 or ICM-20948 at 0x68/0x69 |
-| Finish line | KY-033 line tracking module, facing DOWN | Digital reflectance; measure black/white polarity |
-| Power | Inventory has 9 V and two 3.7 V cells | Supply design remains to be verified; see START_HERE |
+| Part | Used |
+|---|---|
+| Controller | 1x ESP32 DevKit (WROVER-IE) |
+| Drive | 2x TT geared DC motors + wheels, 1x L298N, 1x ball caster (front) |
+| Walls | 3x VL53L0X *or* VL53L1X ToF (left / front / right) - auto-detected |
+| Turning | 1x gyro: MPU-9250/6500 *or* ICM-20948 - auto-detected |
+| End-zone | 1x floor IR sensor (KY-033), digital |
+| Power | 2x 3.7 V cells in series (**not** the 9 V) |
+| Optional | 1x 28BYJ-48 + ULN2003 (see `STEPPER_ENABLED`) |
 
-The inventory lists available options, not a confirmed assembled robot. Check
-the markings on your actual board and startup model report. Unknown gyro/ToF
-identities refuse initialization. No MPU6050 library is required: checked gyro
-register transfers are implemented in GyroDriver.h and RegisterIO.h.
-The IR-08H obstacle detector, ultrasonic sensors, stepper and ULN2003 are not
-used by this version. A rotary encoder in the assortment is not automatically
-an installed wheel encoder. Analog floor mode is retained only for a different
-verified reflectance module; the selected KY-033 uses its digital output.
+Wiring and power: [`docs/WIRING.md`](docs/WIRING.md).
 
-## Rules used
+## Install
 
-- Robot smaller than 15 cm x 15 cm x 25 cm; all attached parts count.
-- Maze footprint 2 m x 2 m; wall height 25 cm.
-- Black floor, white walls and white finish marking.
-- No known map or rehearsal of the official maze; one official attempt.
-- No detachable components, flight, or climbing over walls.
-- Wall contact attracts a time penalty.
-- Complete by week 5; use the team's actual competition date for scheduling.
+**PlatformIO (VS Code):** open this folder, press Build/Upload. Libraries
+install themselves (`platformio.ini`).
 
-These override the pasted README's older left-hand strategy and 100 cm height.
-The live repository could not be retrieved in this environment. Nothing has
-been pushed to GitHub and existing Main.c/README.md contents were not changed.
+**Arduino IDE:** install the ESP32 board package (core 2.x or 3.x) and, from
+the Library Manager, **VL53L0X** and **VL53L1X** (both by Pololu). Open
+`firmware/Micromouse/Micromouse.ino`, board *ESP32 Dev Module*, upload. (Only
+have the VL53L0X library? Set `TOF_ENABLE_VL53L1X 0` in `Config.h`.)
 
-## Code
+## Before the first run
 
-| File | Responsibility |
-| --- | --- |
-| platformio.ini | Pinned ESP32 PlatformIO build, sensor dependencies and serial settings |
-| src/main.cpp | VS Code/PlatformIO entry point compiling the same firmware sketch |
-| firmware/Micromouse/Micromouse.ino | Startup, serial commands, telemetry and optional start button |
-| firmware/Micromouse/Config.h | Pins, safety gates and calibration constants |
-| firmware/Micromouse/Sensors.h | Three ToFs, gyro calibration/yaw and floor reflectance |
-| firmware/Micromouse/GyroDriver.h / RegisterIO.h | Model detection, configuration and complete I2C transfers |
-| firmware/Micromouse/Motors.h | Signed left/right PWM through the L298N |
-| firmware/Micromouse/Navigation.h | Selectable wall-hand rule and non-blocking motion states |
-| tests/navigation_test.cpp | Hardware-independent decision/state tests |
-| tests/gyro_test.cpp | Gyro identity/rate/failure fixtures and pin-map checks |
-| tests/left_navigation_test.cpp | Physical left-wall decisions, steering and turn checks |
-| docs/FirstUpload.ino.txt | Optional smaller sensor-only sketch; use with the supplied headers |
-| docs/TEST_LOG.md | Reproducible physical-test record |
+1. Measure four things and put them in `Config.h` section 1.
+2. Follow [`docs/TUNING.md`](docs/TUNING.md) from step 1.
 
-## Visual Studio Code / PlatformIO
+## Project layout
 
-Open this folder (the one containing `platformio.ini`) in local VS Code and
-install the official PlatformIO IDE extension. Follow
-[docs/VSCODE_SETUP.md](docs/VSCODE_SETUP.md) for Windows build, COM port upload
-and sensor tests. The first build installs the ESP32 tools and both libraries.
-The supplied generic `esp32dev` profile assumes classic ESP32 with 4 MB flash;
-verify the exact development board. Keep both motion/calibration gates false
-for the first upload and disconnect motor power.
+| Path | Purpose |
+|---|---|
+| `firmware/Micromouse/Micromouse.ino` | `setup()` / `loop()` |
+| `.../Config.h` | **All pins and tunables - start here** |
+| `.../Navigator.*` | State machine: wait, countdown, follow, advance, turn, finish, fault; bench commands |
+| `.../Decision.h` | Pure left-hand-rule logic |
+| `.../Sensors.*` + `RangeFilter.h` | ToF setup (unique addresses, L0X/L1X), non-blocking reads, median filter |
+| `.../Gyro.*` | MPU-6050/6500/9250 + ICM-20948 yaw gyro: detect, bias calibration, heading |
+| `.../Motors.*` + `MotorMap.h` | L298N driver with dead-band compensation, trim, braking |
+| `.../Floor.*` | End-zone detection (digital, compares with the floor at start) |
+| `.../Stepper.*` | Optional 28BYJ-48 action on finish |
+| `docs/` | `WIRING.md`, `TUNING.md` |
+| `tests/` | Unit tests + closed-loop maze simulator (`make test`) |
+| `legacy/Main.c.txt` | The first single-file prototype (kept for reference, not built) |
 
-## Arduino IDE (alternative)
+## How it works
 
-1. Install/select the Espressif ESP32 board package and the exact board you own.
-2. Install **Adafruit VL53L0X** and **VL53L1X by Pololu** through Library Manager,
-   including all dependencies it offers. Both are required for automatic ToF detection.
-   This code does not use the Adafruit VL53L1X library or any external gyro library.
-3. Open `firmware/Micromouse/Micromouse.ino` and keep the other headers in that folder.
-4. Select the correct board/USB port and upload with motor power disconnected.
-5. Open Serial Monitor at **115200 baud**. Line ending can be Newline; CR/LF are ignored.
-6. Verify readings with motor motion still disabled. Follow START_HERE before enabling it.
+* **Wall centring:** steering = `KP_WALL` x (centring error) + `KH_WALL` x (gyro
+  heading error). Uses both walls when present, one when only one is, and the
+  gyro heading when neither is.
+* **Left-hand rule:** left open -> turn left; else front clear -> straight; else
+  right open -> turn right; else turn around.
+* **Junctions:** a left opening must read open for `OPEN_CONFIRM_MS`. The robot
+  then drives on `ADVANCE_MM` (measured with the front ToF when a wall is
+  visible, else by a timer) so the *wheels* are in the opening before it spins.
+* **Turns:** closed-loop on the gyro, snapped to multiples of 90 degrees so
+  errors never accumulate.
+* **Filtering:** median-of-3 on every ToF reading, so one glitch can never fake
+  a junction.
+* **End-zone:** the floor IR level is sampled at the start; a change that lasts
+  `IR_CONFIRM_MS` stops the robot.
+* **Safety:** stops if a ToF goes silent, or after `MAX_RUN_MS`. The gyro is
+  re-calibrated just before the run starts.
 
-Motor PWM supports Arduino-ESP32 2.x and 3.x using their respective LEDC APIs.
-This is not a claim that an actual ESP32 build has already passed here.
+## Running
 
-## Desktop tests / Codespaces
+1. Place the robot **still** and square in the start cell.
+2. Press BOOT (or type `s`). The LED blinks fast for 3 s, then the gyro
+   calibrates (~1 s). Keep clear of it for ~4 s.
+3. It stops on the end-zone and blinks. Press BOOT to return to idle.
 
-From this starter directory:
+## Known limits
 
-```sh
-g++ -std=c++11 -Wall -Wextra -Werror -pedantic tests/navigation_test.cpp -o /tmp/micromouse_test
-/tmp/micromouse_test
-g++ -std=c++11 -Wall -Wextra -Werror -pedantic tests/gyro_test.cpp -o /tmp/micromouse_gyro_test
-/tmp/micromouse_gyro_test
-g++ -std=c++11 -Wall -Wextra -Werror -pedantic tests/left_navigation_test.cpp -o /tmp/micromouse_left_test
-/tmp/micromouse_left_test
-```
-
-Codespaces is useful for editing and these tests. For USB upload, use local
-VS Code with PlatformIO or Arduino IDE on the computer connected to the ESP32.
-
-## Important limitations
-
-Set FollowLeftWall=false for RIGHT (default), or true for LEFT in Config.h.
-TargetWallMm and JunctionAdvanceMs apply to the selected side. Physical
-sensor labels and gyro sign do not change when selecting a wall.
-
-This is a reactive wall follower, not a mapped-maze solver. Wall following
-does not guarantee an arbitrary internal finish in a maze containing wall islands
-or loops. Confirm the official maze topology before relying on this strategy.
-
-No installed wheel encoders are confirmed. The gyro estimates rotation, not forward distance
-or reliable x/y position. Junction advances and exits therefore use calibrated
-travel times and will change with battery voltage, floor grip and motor loading.
-Real maze/chassis tests, not just desktop tests, are necessary before competition.
-
-Invalid/out-of-range ToF results conservatively stop navigation; they are not
-treated as openings. The initial version may stop in an open area where a sensor
-cannot produce a valid return. Diagnose this on your test course before choosing
-any model-specific handling for a confirmed no-target result.
-Accepted distances default to the inventory's conservative **30–1200 mm** envelope.
-Do not expect a valid 2 m reading just because the overall maze is 2 m wide.
+* **Left-hand wall following only finds the end-zone if it touches a wall
+  connected to the start.** If the end-zone sits inside an island (a loop of
+  walls not connected to the outer wall), this strategy will circle forever.
+  Check the official maze rules.
+* The advance is dead-reckoned (no wheel encoders). Fresh battery for the run.
+* All of this has been compiled for ESP32 and simulated, **not yet run on the
+  real robot.** Expect to tune.

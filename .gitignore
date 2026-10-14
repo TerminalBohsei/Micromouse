@@ -1,3 +1,4 @@
-# PlatformIO downloads, generated binaries and local editor state.
 .pio/
 .vscode/
+tests/test_unit
+tests/sim_run
