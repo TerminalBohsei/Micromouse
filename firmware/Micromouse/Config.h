@@ -12,6 +12,20 @@
                                 //     "VL53L1X" library). Set 0 if you only have
                                 //     the VL53L0X library installed.
 
+// BENCH MODE: set to 1 to test with ONLY the front ToF sensor and the two wheels
+// (no left/right ToF, no gyro needed). The maze run and the turn tests are
+// disabled in this mode; use  m  d  g  from the serial monitor. Set back to 0
+// once all sensors are fitted.
+#ifndef BENCH_FRONT_ONLY
+#define BENCH_FRONT_ONLY    0
+#endif
+// BENCH_NO_GYRO 1 = all three ToFs + floor IR, but no gyro fitted yet. Same
+// restrictions as above (no maze run, no turn tests); m, d and g still work.
+#ifndef BENCH_NO_GYRO
+#define BENCH_NO_GYRO       1
+#endif
+constexpr int BENCH_STOP_MM = 120;     // 'g' stops when the front reads below this
+
 // ===========================================================================
 //  1. MEASURE YOUR ROBOT AND MAZE  (the rest of the geometry is derived)
 // ===========================================================================

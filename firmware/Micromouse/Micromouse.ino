@@ -50,7 +50,11 @@ void setup() {
   delay(300);
   Serial.println("\n=== Micromouse ===");
   if (!sensors.begin()) haltBlinking("ToF sensor setup failed - see messages above.");
+#if BENCH_FRONT_ONLY || BENCH_NO_GYRO
+  Serial.println("BENCH MODE: gyro skipped (and side ToFs too if BENCH_FRONT_ONLY).");
+#else
   if (!gyro.begin())    haltBlinking("Gyro setup failed - see messages above.");
+#endif
 
   nav.begin();
 }

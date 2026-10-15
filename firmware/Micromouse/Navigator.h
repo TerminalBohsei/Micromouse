@@ -53,6 +53,7 @@ class Navigator {
   void testDrive();
   void testTurn(float deg);
   void testStepper();
+  void testGo();
   void pause(uint32_t ms);           // wait while keeping the sensors/gyro updating
 
   Sensors& s_;

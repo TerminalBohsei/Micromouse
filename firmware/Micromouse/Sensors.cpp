@@ -36,6 +36,11 @@ bool Sensors::begin() {
 
   bool ok = true;
   for (int i = 0; i < 3; i++) {
+#if BENCH_FRONT_ONLY
+    // Left/right are not fitted: leave them in reset so only the front sensor
+    // answers on the bus (otherwise it could be mistaken for "left").
+    if (i != FRONT) continue;
+#endif
     pinMode(XSHUT[i], INPUT);              // release; the breakout's pull-up wakes it
     delay(15);
 
@@ -119,6 +124,13 @@ Ranges Sensors::ranges() const {
 bool Sensors::fresh(uint32_t maxAgeMs) const {
   const uint32_t now = millis();
   for (int i = 0; i < 3; i++) {
+    if (!kind_[i]) {
+#if BENCH_FRONT_ONLY
+      continue;                          // sensor not fitted in bench mode
+#else
+      return false;
+#endif
+    }
     // lastFresh_ == 0 means this sensor has never produced a sample.
     if (lastFresh_[i] == 0 || (now - lastFresh_[i]) > maxAgeMs) return false;
   }

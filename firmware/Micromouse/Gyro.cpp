@@ -156,6 +156,7 @@ bool Gyro::calibrate(uint16_t ms) {
 }
 
 void Gyro::update() {
+  if (kind_ == Kind::NONE) return;                       // no gyro fitted (bench mode)
   const uint32_t nowUs = micros();
   if (nowUs - lastUs_ < POLL_US) return;
   float dt = (nowUs - lastUs_) * 1e-6f;

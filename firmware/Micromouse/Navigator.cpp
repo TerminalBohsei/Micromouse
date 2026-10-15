@@ -84,6 +84,12 @@ void Navigator::waitStart(uint32_t now) {
 }
 
 void Navigator::beginCountdown(uint32_t now) {
+#if BENCH_FRONT_ONLY || BENCH_NO_GYRO
+  (void)now;
+  Serial.println("Bench mode: the maze run needs all sensors. Use m, d or g. "
+                 "(Set BENCH_FRONT_ONLY and BENCH_NO_GYRO to 0 in Config.h for the real run.)");
+  return;
+#endif
   countdownEnd_ = now + START_DELAY_MS;
   state_ = State::COUNTDOWN;
   Serial.println("Starting - take your hands away and keep the robot still!");
@@ -278,10 +284,11 @@ void Navigator::driveHeading(float baseSpeed) {
 
 // ------------------------------------------------------------ bench tests ---
 void Navigator::printHelp() {
-  Serial.println("Bench tests (idle only, wheels OFF the ground for m/l/r/u):\n"
+  Serial.println("Bench tests (idle only, wheels OFF the ground for m):\n"
                  "  s  start the run          m  spin each wheel (check direction)\n"
                  "  d  drive straight 1 s     l/r/u  turn 90 left / 90 right / 180\n"
-                 "  c  re-calibrate gyro      f  stepper test       ?  this help");
+                 "  c  re-calibrate gyro      f  stepper test       ?  this help\n"
+                 "  g  (bench mode) drive until the front sensor sees a wall");
 }
 
 void Navigator::pause(uint32_t ms) {
@@ -296,9 +303,16 @@ void Navigator::console() {
       case 's': beginCountdown(millis()); return;
       case 'm': testMotors();   break;
       case 'd': testDrive();    break;
+#if BENCH_FRONT_ONLY || BENCH_NO_GYRO
+      case 'l': case 'r': case 'u':
+        Serial.println("Turn tests need the gyro: not available in bench mode.");
+        break;
+      case 'g': testGo();       break;
+#else
       case 'l': testTurn(90);   return;
       case 'r': testTurn(-90);  return;
       case 'u': testTurn(180);  return;
+#endif
       case 'c': Serial.println(g_.calibrate(GYRO_CAL_MS) ? "Gyro calibrated." : "Gyro calibration failed."); break;
       case 'f': testStepper();  break;
       case '?': printHelp();    break;
@@ -343,6 +357,25 @@ void Navigator::testTurn(float deg) {
   settle_       = 0;
   testTurn_     = true;
   state_        = State::TURNING;
+}
+
+// Bench: drive straight until the front ToF sees a wall (or 4 s pass).
+void Navigator::testGo() {
+  Serial.printf("Driving forward; stops below %d mm or after 4 s. Keep a hand ready.\n", BENCH_STOP_MM);
+  const uint32_t t0 = millis();
+  while (millis() - t0 < 4000) {
+    g_.update(); s_.update();
+    if (!s_.fresh(SENSOR_STALE_MS)) {
+      if (millis() - t0 > 500) { Serial.println("Front sensor went silent - STOP"); break; }
+      m_.stop(); delay(5); continue;                  // wait for the first reading
+    }
+    const int front = s_.ranges().front;
+    if (front < BENCH_STOP_MM) { Serial.printf("Wall at %d mm - STOP\n", front); break; }
+    m_.drive(BASE_SPEED, BASE_SPEED);
+    delay(5);
+  }
+  m_.brake();
+  Serial.println("Stopped.");
 }
 
 void Navigator::testStepper() {

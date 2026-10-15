@@ -1,7 +1,7 @@
 # Host-side tests (no ESP32 needed):  make test
 FW  = ../firmware/Micromouse
 CXX = g++
-CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -I$(FW) -Isim/shim
+CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -DBENCH_FRONT_ONLY=0 -DBENCH_NO_GYRO=0 -I$(FW) -Isim/shim
 
 all: test_unit sim_run
 
