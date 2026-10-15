@@ -24,8 +24,10 @@ int  analogRead(int pin);
 struct SerialShim {
   bool verbose = false;
   void begin(int) {}
-  int  available() { return 0; }
-  int  read() { return -1; }
+  const char* in = nullptr;                 // test input: feed("l")
+  void feed(const char* c) { in = c; }
+  int  available() { return in && *in ? 1 : 0; }
+  int  read() { return (in && *in) ? *in++ : -1; }
   void println(const char* s) { if (verbose) puts(s); }
   __attribute__((format(printf, 2, 3))) void printf(const char* f, ...) {
     if (!verbose) return;

@@ -33,3 +33,22 @@
 * Bench commands (`m d l r u c f ?`) so wheels, speed and turns can be tuned without a maze.
 * Press BOOT again after a finish/fault to re-arm without resetting.
 * Host tests + closed-loop simulator (`tests/`).
+
+## Gyro removed
+
+The robot has no gyro, so all gyro code is gone (`Gyro.*`, `GYRO_*`, `KH_WALL`,
+`BENCH_NO_GYRO`).
+
+| Was | Now |
+|---|---|
+| Closed-loop 90/180 turns on the gyro heading | Timed spins: `TURN_90_MS`, `TURN_180_MS` (calibrate with `l`, `u`) |
+| Steering = `KP_WALL` x error + `KH_WALL` x gyro heading error | `KP_WALL` x error + `KD_WALL` x error rate (from the ToF readings) |
+| Gyro heading hold when no wall is visible | Drives straight (use `MOTOR_TRIM_*` to make "straight" true) |
+| Side readings of any size were steered on | Readings beyond `STEER_WALL_MAX_MM`, e.g. a half-seen doorway, are ignored and one reading is capped at `MAX_WALL_ERR_MM`. Without this the robot veered into doorways and never recovered |
+| Maze run disabled while `BENCH_NO_GYRO` was 1 | That flag is gone: the maze run works as soon as all three ToF sensors are fitted |
+
+Simulator (24 random 9x9 mazes, noise, glitches, mismatched wheels, battery
+-6% / 0 / +5%): 24/24 reach the end-zone with zero wall contacts. Stress mode
+(4x glitches, 2x noise, wheel skew +-7%, battery +-10%): 23/24 reach it, 20/24
+with zero contacts. Timed turns are the weak spot: a battery 6% off makes a
+90-degree turn come out 83-94 degrees.

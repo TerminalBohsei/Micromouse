@@ -1,6 +1,6 @@
 #pragma once
 // 2-D physics world: a differential-drive robot in a wall maze, with simulated
-// VL53 ToF sensors (noise, glitches, async 50 Hz), a gyro (bias + noise) and a
+// VL53 ToF sensors (noise, glitches, async 50 Hz) and a
 // first-order motor model with a dead-band.
 #include <stdint.h>
 #include <vector>
@@ -30,7 +30,6 @@ struct World {
   double nextSample[3] = {0, 0, 0};
   bool   ready[3] = {false, false, false};
   int    mm[3] = {0, 0, 0};
-  double gyroBias = 1.5;                 // deg/s
   double omegaDps = 0;
   double glitchProb = 0.004, tofSigma = 2.5;
 

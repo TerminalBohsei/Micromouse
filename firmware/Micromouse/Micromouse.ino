@@ -1,12 +1,10 @@
 // ============================================================================
 //  Micromouse - self-guiding maze robot
-//  ESP32 + 3x VL53L0X/L1X (ToF) + MPU-9250/6500 or ICM-20948 (gyro)
-//  + L298N + 2 TT motors + floor IR sensor (+ optional 28BYJ-48 stepper)
+//  ESP32 + 3x VL53L0X/L1X (ToF) + L298N + 2 TT motors + floor IR sensor (+ optional 28BYJ-48 stepper)
 //
 //  Strategy: left-hand wall following.
-//    - PD wall-centring using the left/right ToF sensors, damped by the gyro
-//    - gyro heading hold when there is no wall to follow
-//    - gyro-controlled 90/180 degree turns, snapped to the maze axes
+//    - PD wall-centring using the left/right ToF sensors
+//    - 90/180 degree turns are timed spins (calibrate TURN_90_MS / TURN_180_MS)
 //    - floor IR sensor detects the end-zone and stops the robot
 //
 //  Libraries:  "VL53L0X" and "VL53L1X" by Pololu (see platformio.ini)
@@ -17,16 +15,14 @@
 #include <Wire.h>
 #include "Config.h"
 #include "Sensors.h"
-#include "Gyro.h"
 #include "Motors.h"
 #include "Stepper.h"
 #include "Navigator.h"
 
 Sensors   sensors;
-Gyro      gyro;
 Motors    motors;
 Stepper   stepper;
-Navigator nav(sensors, gyro, motors, stepper);
+Navigator nav(sensors, motors, stepper);
 
 [[noreturn]] static void haltBlinking(const char* msg) {
   Serial.println(msg);
@@ -50,10 +46,8 @@ void setup() {
   delay(300);
   Serial.println("\n=== Micromouse ===");
   if (!sensors.begin()) haltBlinking("ToF sensor setup failed - see messages above.");
-#if BENCH_FRONT_ONLY || BENCH_NO_GYRO
-  Serial.println("BENCH MODE: gyro skipped (and side ToFs too if BENCH_FRONT_ONLY).");
-#else
-  if (!gyro.begin())    haltBlinking("Gyro setup failed - see messages above.");
+#if BENCH_FRONT_ONLY
+  Serial.println("BENCH MODE: only the front ToF is used (set BENCH_FRONT_ONLY 0 for the real run).");
 #endif
 
   nav.begin();

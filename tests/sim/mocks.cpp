@@ -1,10 +1,9 @@
 // Simulator stand-ins for the hardware-bound classes. They keep the same
-// public interface as the real Sensors / Gyro / Motors, so the REAL
+// public interface as the real Sensors / Motors, so the REAL
 // Navigator.cpp runs unchanged. The ToF filtering uses the real RangeFilter.h
 // and the dead-band mapping uses the real MotorMap.h.
 #include <Arduino.h>
 #include "Sensors.h"
-#include "Gyro.h"
 #include "Motors.h"
 #include "MotorMap.h"
 #include "Config.h"
@@ -44,24 +43,6 @@ bool Sensors::fresh(uint32_t maxAgeMs) const {
 }
 void Sensors::restart() { for (int i = 0; i < 3; i++) filt_[i].restart(); }
 const char* Sensors::model(int) const { return "sim"; }
-
-// ------------------------------------------------------------------ Gyro ----
-// bias_ is kept in deg/s here.
-bool Gyro::begin() { name_ = "sim"; return calibrate(0); }
-bool Gyro::calibrate(uint16_t) {
-  bias_ = (float)(g_world->gyroBias + 0.01 * g_world->gauss());   // what a still robot measures
-  heading_ = 0; rate_ = 0; lastUs_ = micros();
-  return true;
-}
-void Gyro::update() {
-  const uint32_t nowUs = micros();
-  if (nowUs - lastUs_ < 4000) return;
-  float dt = (nowUs - lastUs_) * 1e-6f; lastUs_ = nowUs;
-  const double raw = g_world->omegaDps + g_world->gyroBias + 0.08 * g_world->gauss();
-  float r = GYRO_SIGN * (float)(raw - bias_);
-  if (fabsf(r) < GYRO_DEADBAND_DPS) r = 0;
-  rate_ = r; heading_ += r * dt;
-}
 
 // ---------------------------------------------------------------- Motors ----
 void Motors::begin() {}

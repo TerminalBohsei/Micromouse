@@ -41,21 +41,6 @@ int main() {
   assert(turnAngle(Action::TURN_AROUND) == 180.0f);
   assert(turnAngle(Action::FOLLOW) == 0.0f);
 
-  // Heading snapping to the maze axes.
-  assert(snap90(0.0f) == 0.0f);
-  assert(snap90(44.0f) == 0.0f);
-  assert(snap90(80.0f) == 90.0f);
-  assert(snap90(-47.0f) == -90.0f);
-  assert(snap90(172.0f) == 180.0f);
-
-  // Accumulated turn error is removed: left, left, left, left, with 5 degrees
-  // of error each time, still lands on a multiple of 90.
-  {
-    float h = 0;
-    for (int i = 0; i < 4; i++) h = snap90(h + turnAngle(Action::TURN_LEFT) - 5.0f);
-    assert(h == 360.0f);
-  }
-
   // clampf
   assert(clampf(5, 0, 3) == 3);
   assert(clampf(-1, 0, 3) == 0);

@@ -13,16 +13,11 @@
                                 //     the VL53L0X library installed.
 
 // BENCH MODE: set to 1 to test with ONLY the front ToF sensor and the two wheels
-// (no left/right ToF, no gyro needed). The maze run and the turn tests are
-// disabled in this mode; use  m  d  g  from the serial monitor. Set back to 0
-// once all sensors are fitted.
+// (no left/right ToF). The maze run and the turn tests are disabled in this
+// mode; use  m  d  g  from the serial monitor. Set back to 0 once all three
+// ToF sensors are fitted.
 #ifndef BENCH_FRONT_ONLY
 #define BENCH_FRONT_ONLY    0
-#endif
-// BENCH_NO_GYRO 1 = all three ToFs + floor IR, but no gyro fitted yet. Same
-// restrictions as above (no maze run, no turn tests); m, d and g still work.
-#ifndef BENCH_NO_GYRO
-#define BENCH_NO_GYRO       1
 #endif
 constexpr int BENCH_STOP_MM = 120;     // 'g' stops when the front reads below this
 
@@ -101,10 +96,6 @@ constexpr float MOTOR_TRIM_RIGHT  = 1.00f;
 // Dead-band: any non-zero command is lifted to at least this PWM duty.
 constexpr int   MOTOR_MIN_PWM     = 60;
 
-// Gyro: +1 if turning LEFT (counter-clockwise from above) gives a positive
-// rate (board flat, component side up). -1 if you mounted it the other way.
-constexpr int GYRO_SIGN = 1;
-
 // ===========================================================================
 //  4. TIMING AND SAFETY
 // ===========================================================================
@@ -130,18 +121,27 @@ constexpr int FRONT_SLOW_MM    = 220;   // start slowing down below this
 
 constexpr float BASE_SPEED       = 150;   // straight-line speed (command 0-255)
 constexpr float MIN_SPEED_SCALE  = 0.55f; // slowest fraction when approaching a wall
-constexpr float TURN_SPEED       = 150;   // max in-place turn speed
-constexpr float MIN_TURN_PWM     = 95;    // enough to overcome stiction
+constexpr float TURN_SPEED       = 150;   // PWM used while spinning on the spot
 
-// Wall following: steering u = KP_WALL*err + KH_WALL*(heading error).
-// KH_WALL damps the weaving using the gyro (much cleaner than differentiating ToF).
-constexpr float KP_WALL     = 1.00f;   // PWM per mm of centring error
-constexpr float KH_WALL     = 1.20f;   // PWM per degree of heading error
-constexpr float KP_HEADING  = 2.50f;   // PWM per degree (gyro-only driving, no wall)
+// Wall following: steering u = KP_WALL*err + KD_WALL*d(err)/dt.
+// err = how far the robot is from the middle of the corridor (mm). The D term
+// damps the weaving; there is no gyro, so it comes from the ToF readings.
+constexpr float KP_WALL     = 1.50f;   // PWM per mm of centring error
+constexpr float KD_WALL     = 0.30f;  // PWM per (mm/s) of centring-error rate
+constexpr float D_ALPHA     = 0.30f;   // smoothing of that rate (1 = none)
 constexpr float MAX_CORR    = 60.0f;   // steering clamp (PWM)
-constexpr float KP_TURN     = 3.00f;   // PWM per degree of turn error
-constexpr float TURN_TOL_DEG       = 4.0f;    // "close enough" for a turn
-constexpr float TURN_RATE_TOL_DPS  = 25.0f;   // ...and rotating slower than this
+// A side reading is only steered on if it is plausibly THIS corridor's wall.
+// Centred it reads TARGET_SIDE_MM; hard against the other wall it reads
+// CORRIDOR - SPAN. Anything beyond that (+ margin) is a doorway or a glitch:
+// ignore it for steering, otherwise the robot veers into the opening.
+constexpr int   STEER_WALL_MAX_MM = (CORRIDOR_MM - SENSOR_SPAN_MM) + 25;
+constexpr float MAX_WALL_ERR_MM   = 35.0f;   // one reading can never ask for more than this
+
+// ---- Turns (open loop: the wheels spin for a fixed time) -------------------
+// Calibrate with  l  and  u  (docs/TUNING.md). Re-do it if the battery changes:
+// a weaker battery turns less in the same time.
+constexpr uint32_t TURN_90_MS  = 380;    // time to spin 90 degrees at TURN_SPEED
+constexpr uint32_t TURN_180_MS = 723;    // time to spin 180 degrees
 
 // ---- Junctions ------------------------------------------------------------
 // A left opening must read open this long before it is trusted.
@@ -163,16 +163,9 @@ constexpr uint32_t TURN_COOLDOWN_MS   = 500;   // ignore new left-openings after
 constexpr uint32_t POST_TURN_MS       = 100;   // stand still after a turn while the ToF
                                                // filters refill with fresh readings
 constexpr uint32_t BRAKE_MS           = 60;    // pause before a turn to kill momentum
-constexpr uint32_t TURN_TIMEOUT_MS    = 1800;  // give up on a turn after this long
 
 // ===========================================================================
-//  6. GYRO
-// ===========================================================================
-constexpr float GYRO_DEADBAND_DPS = 0.15f;    // ignore noise below this when integrating
-constexpr uint16_t GYRO_CAL_MS    = 800;      // bias calibration time (robot STILL)
-
-// ===========================================================================
-//  7. END-ZONE (floor IR sensor)
+//  6. END-ZONE (floor IR sensor)
 // ===========================================================================
 // The KY-033 (and IR-08H) modules have a DIGITAL output (a comparator with a
 // trim-pot), so this is digital by default. The floor level is sampled when
@@ -185,7 +178,7 @@ constexpr int      IR_DELTA         = 600;     // ADC counts, analog mode only
 constexpr uint32_t IR_CONFIRM_MS    = 30;      // must stay different this long
 
 // ===========================================================================
-//  8. STEPPER (28BYJ-48 via ULN2003) - optional "finish" action
+//  7. STEPPER (28BYJ-48 via ULN2003) - optional "finish" action
 // ===========================================================================
 constexpr bool     STEPPER_ENABLED     = false;
 constexpr long     STEPPER_FINISH_STEPS = 1024;  // half-steps on finish (4096 = one output turn)

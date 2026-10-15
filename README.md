@@ -1,7 +1,7 @@
 # Micromouse
 
 A self-guiding maze robot. An ESP32 reads three Time-of-Flight (ToF) sensors
-and a gyro, follows the **left-hand wall**, and stops when a floor IR sensor
+follows the **left-hand wall**, and stops when a floor IR sensor
 sees the end-zone. **Goal:** reach the end-zone as fast as possible, in a
 single attempt, without touching the walls (contact = time penalty).
 
@@ -12,7 +12,7 @@ single attempt, without touching the walls (contact = time penalty).
 | Controller | 1x ESP32 DevKit (WROVER-IE) |
 | Drive | 2x TT geared DC motors + wheels, 1x L298N, 1x ball caster (front) |
 | Walls | 3x VL53L0X *or* VL53L1X ToF (left / front / right) - auto-detected |
-| Turning | 1x gyro: MPU-9250/6500 *or* ICM-20948 - auto-detected |
+| Turning | none needed: turns are timed spins (calibrate once) |
 | End-zone | 1x floor IR sensor (KY-033), digital |
 | Power | 2x 3.7 V cells in series (**not** the 9 V) |
 | Optional | 1x 28BYJ-48 + ULN2003 (see `STEPPER_ENABLED`) |
@@ -43,7 +43,6 @@ have the VL53L0X library? Set `TOF_ENABLE_VL53L1X 0` in `Config.h`.)
 | `.../Navigator.*` | State machine: wait, countdown, follow, advance, turn, finish, fault; bench commands |
 | `.../Decision.h` | Pure left-hand-rule logic |
 | `.../Sensors.*` + `RangeFilter.h` | ToF setup (unique addresses, L0X/L1X), non-blocking reads, median filter |
-| `.../Gyro.*` | MPU-6050/6500/9250 + ICM-20948 yaw gyro: detect, bias calibration, heading |
 | `.../Motors.*` + `MotorMap.h` | L298N driver with dead-band compensation, trim, braking |
 | `.../Floor.*` | End-zone detection (digital, compares with the floor at start) |
 | `.../Stepper.*` | Optional 28BYJ-48 action on finish |
@@ -53,28 +52,30 @@ have the VL53L0X library? Set `TOF_ENABLE_VL53L1X 0` in `Config.h`.)
 
 ## How it works
 
-* **Wall centring:** steering = `KP_WALL` x (centring error) + `KH_WALL` x (gyro
-  heading error). Uses both walls when present, one when only one is, and the
-  gyro heading when neither is.
+* **Wall centring:** steering = `KP_WALL` x (centring error) + `KD_WALL` x (how
+  fast that error is changing; this damps the weaving). Uses both walls when
+  present, one when only one is, and drives straight when neither is. A side
+  reading that is too far away to be this corridor's wall (a doorway, a
+  glitch) is ignored for steering.
 * **Left-hand rule:** left open -> turn left; else front clear -> straight; else
   right open -> turn right; else turn around.
 * **Junctions:** a left opening must read open for `OPEN_CONFIRM_MS`. The robot
   then drives on `ADVANCE_MM` (measured with the front ToF when a wall is
   visible, else by a timer) so the *wheels* are in the opening before it spins.
-* **Turns:** closed-loop on the gyro, snapped to multiples of 90 degrees so
-  errors never accumulate.
+* **Turns:** open loop. The robot stops, spins on the spot for `TURN_90_MS`
+  (or `TURN_180_MS`), then stops. Calibrate these once with the `l` and `u`
+  commands, and again if the battery changes. Small angle errors are corrected
+  afterwards by the wall centring.
 * **Filtering:** median-of-3 on every ToF reading, so one glitch can never fake
   a junction.
 * **End-zone:** the floor IR level is sampled at the start; a change that lasts
   `IR_CONFIRM_MS` stops the robot.
-* **Safety:** stops if a ToF goes silent, or after `MAX_RUN_MS`. The gyro is
-  re-calibrated just before the run starts.
+* **Safety:** stops if a ToF goes silent, or after `MAX_RUN_MS`.
 
 ## Running
 
 1. Place the robot **still** and square in the start cell.
-2. Press BOOT (or type `s`). The LED blinks fast for 3 s, then the gyro
-   calibrates (~1 s). Keep clear of it for ~4 s.
+2. Press BOOT (or type `s`). The LED blinks fast for 3 s. Keep clear of it.
 3. It stops on the end-zone and blinks. Press BOOT to return to idle.
 
 ## Known limits
@@ -83,6 +84,8 @@ have the VL53L0X library? Set `TOF_ENABLE_VL53L1X 0` in `Config.h`.)
   connected to the start.** If the end-zone sits inside an island (a loop of
   walls not connected to the outer wall), this strategy will circle forever.
   Check the official maze rules.
-* The advance is dead-reckoned (no wheel encoders). Fresh battery for the run.
+* There are no wheel encoders and no gyro: the junction advance and the turns
+  are timed, so they depend on the battery. Use a fresh, fully charged battery
+  for the run and calibrate `CRUISE_MM_S`, `TURN_90_MS` and `TURN_180_MS` with it.
 * All of this has been compiled for ESP32 and simulated, **not yet run on the
   real robot.** Expect to tune.

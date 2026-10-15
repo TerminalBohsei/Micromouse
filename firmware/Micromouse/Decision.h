@@ -40,11 +40,6 @@ inline float turnAngle(Action a) {
   }
 }
 
-// The maze is orthogonal and the robot starts aligned with it, so every
-// heading should be a multiple of 90 degrees. Snapping stops turn error from
-// accumulating.
-inline float snap90(float deg) { return roundf(deg / 90.0f) * 90.0f; }
-
 inline float clampf(float v, float lo, float hi) {
   return v < lo ? lo : (v > hi ? hi : v);
 }

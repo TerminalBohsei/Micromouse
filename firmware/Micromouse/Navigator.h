@@ -2,7 +2,6 @@
 #include <stdint.h>
 #include "Decision.h"
 #include "Sensors.h"
-#include "Gyro.h"
 #include "Motors.h"
 #include "Stepper.h"
 #include "Floor.h"
@@ -12,14 +11,14 @@ enum class State : uint8_t {
   COUNTDOWN,    // button pressed, waiting START_DELAY_MS
   FOLLOW,       // wall following
   ADVANCE,      // driving on a little before a left turn
-  TURNING,      // closed-loop turn using the gyro
+  TURNING,      // spinning on the spot for a fixed time
   FINISHED,     // end-zone reached (or time limit)
   FAULT         // sensor failure - stopped for safety
 };
 
 class Navigator {
  public:
-  Navigator(Sensors& s, Gyro& g, Motors& m, Stepper& st);
+  Navigator(Sensors& s, Motors& m, Stepper& st);
   void  begin();
   void  update();                    // call from loop()
   State state() const { return state_; }
@@ -39,10 +38,12 @@ class Navigator {
   void beginCountdown(uint32_t now);
   void beginAdvance(uint32_t now, const Ranges& r);
   void beginTurn(uint32_t now);
+  void startSpin(uint32_t now, float deg);          // + = left
   void finish(uint32_t now, const char* why);
   void fault(const char* why);
   void driveWalls(const Ranges& r, bool slowForFront = true);
-  void driveHeading(float baseSpeed);
+  float steer(const Ranges& r, uint32_t now);         // wall-centring correction (PWM, + = left)
+  void driveAt(const Ranges& r, float base);
   void blink(uint32_t now, uint32_t periodMs);
   void telemetry(uint32_t now);
 
@@ -54,10 +55,9 @@ class Navigator {
   void testTurn(float deg);
   void testStepper();
   void testGo();
-  void pause(uint32_t ms);           // wait while keeping the sensors/gyro updating
+  void pause(uint32_t ms);           // wait while keeping the sensors updating
 
   Sensors& s_;
-  Gyro&    g_;
   Motors&  m_;
   Stepper& st_;
   FloorSensor floor_;
@@ -71,9 +71,13 @@ class Navigator {
   const char* finishWhy_ = "";
 
   Action  pending_       = Action::FOLLOW;
-  float   headingTarget_ = 0, turnTarget_ = 0, lastU_ = 0;
+  float   lastU_ = 0;
+  float   prevErr_ = 0, errRate_ = 0;      // wall-centring error and its smoothed rate
+  bool    errValid_ = false;
+  uint32_t prevErrMs_ = 0;
+  uint32_t turnEnd_ = 0;
+  float   turnDir_ = 1;                     // +1 left, -1 right
   int     advanceFront0_ = 0;
-  uint8_t settle_        = 0;
   bool    leftOpen_      = false;
   bool    advanceViaFront_ = false;
   bool    armed_         = false;    // start button must be released before it counts

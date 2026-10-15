@@ -14,7 +14,7 @@ its PSRAM and GPIO 6-11 to the flash, so none of those are used.
    - ──────────────► L298N GND ──┬──► ESP32 GND ──► every sensor GND
                                  └──► ULN2003 GND (if used)
  L298N "5V" terminal ──► ESP32 "5V" pin   (leave the L298N 5V-EN jumper ON)
- ESP32 "3V3" pin ──► ToF VIN x3, gyro VCC, floor IR VCC
+ ESP32 "3V3" pin ──► ToF VIN x3, floor IR VCC
 ```
 
 * **Use the two 3.7 V cells in series, not the 9 V battery.** A 9 V alkaline
@@ -31,7 +31,7 @@ its PSRAM and GPIO 6-11 to the flash, so none of those are used.
 * Do **not** power the floor IR module from 5 V: its OUT pin would then output
   5 V into a 3.3 V ESP32 pin.
 
-## I2C bus (3 ToF sensors + gyro share it)
+## I2C bus (the 3 ToF sensors share it)
 
 | Signal | ESP32 pin |
 |---|---|
@@ -43,15 +43,10 @@ its PSRAM and GPIO 6-11 to the flash, so none of those are used.
 | ToF left  | 0x30 (set at boot) | XSHUT -> GPIO 25 |
 | ToF front | 0x31 (set at boot) | XSHUT -> GPIO 26 |
 | ToF right | 0x32 (set at boot) | XSHUT -> GPIO 27 |
-| Gyro (MPU-9250/6500 or ICM-20948) | 0x68 or 0x69 (auto-detected) | none |
 
 All three ToFs power up at 0x29. The firmware holds them in reset via XSHUT
 and wakes them one at a time. VL53L0X **and** VL53L1X boards are both accepted
 (the lab list says "vl53l0/1x"); the boot message shows which you have.
-
-Gyro: fit **one** (the MPU-9250/6500 *or* the ICM-20948). Leave unused pins
-(INT, FSYNC, NCS, ADO...) unconnected. The Adafruit ICM-20948 board answers on
-0x69 and the blue MPU board on 0x68 - both work.
 
 ## L298N motor driver
 
@@ -106,8 +101,6 @@ L298N's small 5 V regulator is not overloaded.
   is centred each side sensor should read **at least ~35-40 mm** to the wall
   (the VL53L0X is unreliable closer than ~30 mm); the firmware refuses to build
   if your measurements say otherwise.
-* Gyro: mount flat, component side up, away from the motors. If turning left
-  makes `hdg` go **down**, set `GYRO_SIGN = -1`.
 * Keep the whole robot within the 15 x 15 cm limit.
 * The wheels must be able to spin the robot on the spot inside a corridor:
   measure from the middle of the axle to the farthest corner of the body and

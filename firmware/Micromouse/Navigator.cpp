@@ -3,8 +3,8 @@
 #include <Arduino.h>
 #include <math.h>
 
-Navigator::Navigator(Sensors& s, Gyro& g, Motors& m, Stepper& st)
-    : s_(s), g_(g), m_(m), st_(st) {
+Navigator::Navigator(Sensors& s, Motors& m, Stepper& st)
+    : s_(s), m_(m), st_(st) {
   thr_ = { SIDE_OPEN_MM, FRONT_BLOCKED_MM };
 }
 
@@ -31,7 +31,6 @@ void Navigator::blink(uint32_t now, uint32_t periodMs) {
 
 // ------------------------------------------------------------------- loop ---
 void Navigator::update() {
-  g_.update();      // integrate the gyro as often as possible
   s_.update();      // non-blocking
   st_.update();     // non-blocking
 
@@ -64,8 +63,8 @@ void Navigator::telemetry(uint32_t now) {
   if (now - lastDbg_ < 100) return;
   lastDbg_ = now;
   const Ranges r = s_.ranges();
-  Serial.printf("st=%d L=%d F=%d R=%d hdg=%.1f u=%.1f ir=%d\n",
-                (int)state_, r.left, r.front, r.right, g_.heading(), lastU_, floor_.raw());
+  Serial.printf("st=%d L=%d F=%d R=%d u=%.1f ir=%d\n",
+                (int)state_, r.left, r.front, r.right, lastU_, floor_.raw());
 #else
   (void)now;
 #endif
@@ -84,10 +83,10 @@ void Navigator::waitStart(uint32_t now) {
 }
 
 void Navigator::beginCountdown(uint32_t now) {
-#if BENCH_FRONT_ONLY || BENCH_NO_GYRO
+#if BENCH_FRONT_ONLY
   (void)now;
-  Serial.println("Bench mode: the maze run needs all sensors. Use m, d or g. "
-                 "(Set BENCH_FRONT_ONLY and BENCH_NO_GYRO to 0 in Config.h for the real run.)");
+  Serial.println("Bench mode: the maze run needs all three ToF sensors. Use m, d or g. "
+                 "(Set BENCH_FRONT_ONLY to 0 in Config.h for the real run.)");
   return;
 #endif
   countdownEnd_ = now + START_DELAY_MS;
@@ -100,21 +99,18 @@ void Navigator::countdown(uint32_t now) {
   blink(now, 100);
   if (now < countdownEnd_) return;
 
-  // The robot is now standing still and aligned with the maze: re-measure the
-  // gyro bias (it drifts with temperature) and remember what the floor looks like.
+  // The robot is standing still and aligned with the maze: remember what the
+  // floor looks like (the finish line is anything different).
   digitalWrite(PIN_LED, HIGH);
-  if (!g_.calibrate(GYRO_CAL_MS))
-    Serial.println("WARNING: gyro calibration failed (was the robot moving?) - using the old bias.");
   floor_.captureBaseline();
   Serial.printf("Floor reading at start = %d (finish = anything different)\n", floor_.baseline());
 
-  // The calibration blocked the loop: let the ToF filters refill before judging them.
+  // Let the ToF filters fill with fresh readings before judging them.
   const uint32_t t0 = millis();
-  while (millis() - t0 < 150) { g_.update(); s_.update(); delay(1); }
+  while (millis() - t0 < 150) { s_.update(); delay(1); }
   if (!s_.fresh(SENSOR_STALE_MS)) { fault("sensors not ready at start"); return; }
 
-  g_.resetHeading();            // the robot is aligned with the maze here
-  headingTarget_ = 0;
+  errValid_      = false;
   leftOpen_      = false;
   startMs_       = millis();
   lastTurnEnd_   = startMs_ - TURN_COOLDOWN_MS;
@@ -199,101 +195,109 @@ void Navigator::advance(uint32_t now) {
   if (done) { beginTurn(now); return; }
   // Keep following whichever wall is still there (the right one, usually) so the
   // robot is centred in the corridor when it starts spinning; with no wall at
-  // all this falls back to the gyro heading. Constant speed: the advance is
+  // all this drives straight. Constant speed: the advance is
   // measured by distance/time.
   driveWalls(r, false);
 }
 
 // ------------------------------------------------------------------- turn ---
+// Turns are open loop: stop, spin on the spot for a calibrated time, stop.
 void Navigator::beginTurn(uint32_t now) {
-  turnTarget_   = snap90(g_.heading() + turnAngle(pending_));
+  startSpin(now, turnAngle(pending_));
+}
+
+void Navigator::startSpin(uint32_t now, float deg) {
+  turnDir_ = deg >= 0 ? 1.0f : -1.0f;
+  const bool half = fabsf(deg) > 135.0f;                    // 180
   m_.brake();
-  turnBegin_    = now + BRAKE_MS;
-  turnDeadline_ = turnBegin_ + TURN_TIMEOUT_MS;
-  settle_       = 0;
-  state_        = State::TURNING;
+  turnBegin_ = now + BRAKE_MS;                              // let the robot stop first
+  turnEnd_   = turnBegin_ + (half ? TURN_180_MS : TURN_90_MS);
+  state_     = State::TURNING;
 }
 
 void Navigator::turning(uint32_t now) {
   if (!testTurn_ && !running(now)) return;
   if (now < turnBegin_) return;                 // still braking
 
-  const float err = turnTarget_ - g_.heading(); // + = need to turn left
-  if (fabsf(err) < TURN_TOL_DEG) {
-    m_.brake();
-    if (fabsf(g_.rate()) < TURN_RATE_TOL_DPS) settle_++; else settle_ = 0;
-  } else {
-    settle_ = 0;
-    const float s   = clampf(KP_TURN * fabsf(err), MIN_TURN_PWM, TURN_SPEED);
-    const float dir = err > 0 ? 1.0f : -1.0f;
-    m_.drive(-dir * s, dir * s);                // spin on the spot
+  if (now < turnEnd_) {
+    m_.drive(-turnDir_ * TURN_SPEED, turnDir_ * TURN_SPEED);   // spin on the spot
+    return;
   }
-
-  if (settle_ >= 2 || now > turnDeadline_) {
-    m_.brake();
-    if (testTurn_) {
-      testTurn_ = false;
-      Serial.printf("Turn test: target %.1f, reached %.1f (error %.1f deg)\n",
-                    turnTarget_, g_.heading(), turnTarget_ - g_.heading());
-      state_ = State::WAIT_START;
-      return;
-    }
-    headingTarget_ = turnTarget_;
-    lastTurnEnd_   = now;
-    leftOpen_      = false;
-    s_.restart();                               // drop readings taken while rotating
-    state_         = State::FOLLOW;
+  m_.brake();
+  if (testTurn_) {
+    testTurn_ = false;
+    pause(500);                                 // keep braking, exactly like a real turn does
+    m_.stop();
+    Serial.println("Turn done. Measure how far it really turned (protractor, or a printed "
+                   "square corner) and fix TURN_90_MS / TURN_180_MS in Config.h.");
+    state_ = State::WAIT_START;
+    return;
   }
+  lastTurnEnd_ = now;
+  leftOpen_    = false;
+  errValid_    = false;
+  s_.restart();                                 // drop readings taken while rotating
+  state_       = State::FOLLOW;
 }
 
 // ---------------------------------------------------------------- driving ---
 // Steering convention: u > 0 steers LEFT (right wheel faster).
-void Navigator::driveWalls(const Ranges& r, bool slowForFront) {
-  const bool haveL = r.left  < thr_.sideOpen;
-  const bool haveR = r.right < thr_.sideOpen;
-  const float hErr = headingTarget_ - g_.heading();   // + = pointing right of the axis
+float Navigator::steer(const Ranges& r, uint32_t now) {
+  const bool haveL = r.left  < STEER_WALL_MAX_MM;
+  const bool haveR = r.right < STEER_WALL_MAX_MM;
 
-  float u;
+  float u = 0;                                        // no wall: just go straight
   if (haveL || haveR) {
     float e;                                          // + = needs to move LEFT
     if (haveL && haveR) e = (r.left - r.right) * 0.5f;
     else if (haveL)     e = (float)r.left - TARGET_SIDE_MM;
     else                e = TARGET_SIDE_MM - (float)r.right;
-    u = KP_WALL * e + KH_WALL * hErr;
-    headingTarget_ = snap90(g_.heading());            // remember the maze axis
+    e = clampf(e, -MAX_WALL_ERR_MM, MAX_WALL_ERR_MM);
+
+    // Rate of change of the error (smoothed): damps the weaving.
+    if (errValid_ && now > prevErrMs_) {
+      const float dt = (now - prevErrMs_) * 0.001f;
+      errRate_ += D_ALPHA * ((e - prevErr_) / dt - errRate_);
+    } else {
+      errRate_ = 0;
+    }
+    prevErr_ = e; prevErrMs_ = now; errValid_ = true;
+    u = KP_WALL * e + KD_WALL * errRate_;
   } else {
-    u = KP_HEADING * hErr;                            // no wall: hold the gyro heading
+    errValid_ = false;
   }
   u = clampf(u, -MAX_CORR, MAX_CORR);
   lastU_ = u;
+  return u;
+}
 
+void Navigator::driveAt(const Ranges& r, float baseCmd) {
+  const float u = steer(r, millis());
+  const float base = baseCmd * (1.0f - 0.4f * fabsf(u) / MAX_CORR);
+  m_.drive(base - u, base + u);
+}
+
+void Navigator::driveWalls(const Ranges& r, bool slowForFront) {
   // Slow down as a wall approaches, and when steering hard.
   const float k = slowForFront
       ? clampf((float)(r.front - thr_.frontBlocked) / (float)(FRONT_SLOW_MM - thr_.frontBlocked),
                MIN_SPEED_SCALE, 1.0f)
       : 1.0f;
-  const float base = BASE_SPEED * k * (1.0f - 0.4f * fabsf(u) / MAX_CORR);
-  m_.drive(base - u, base + u);
-}
-
-void Navigator::driveHeading(float baseSpeed) {
-  const float u = clampf(KP_HEADING * (headingTarget_ - g_.heading()), -MAX_CORR, MAX_CORR);
-  lastU_ = u;
-  m_.drive(baseSpeed - u, baseSpeed + u);
+  driveAt(r, BASE_SPEED * k);
 }
 
 // ------------------------------------------------------------ bench tests ---
 void Navigator::printHelp() {
   Serial.println("Bench tests (idle only, wheels OFF the ground for m):\n"
                  "  s  start the run          m  spin each wheel (check direction)\n"
-                 "  d  drive straight 1 s     l/r/u  turn 90 left / 90 right / 180\n"
-                 "  c  re-calibrate gyro      f  stepper test       ?  this help\n"
+                 "  d  drive straight 1 s     l/r/u  turn 90 left / 90 right / 180 (timed)\n"
+                 "  f  stepper test           ?  this help\n"
                  "  g  (bench mode) drive until the front sensor sees a wall");
 }
 
 void Navigator::pause(uint32_t ms) {
   const uint32_t t0 = millis();
-  while (millis() - t0 < ms) { g_.update(); s_.update(); st_.update(); delay(1); }
+  while (millis() - t0 < ms) { s_.update(); st_.update(); delay(1); }
 }
 
 void Navigator::console() {
@@ -303,17 +307,12 @@ void Navigator::console() {
       case 's': beginCountdown(millis()); return;
       case 'm': testMotors();   break;
       case 'd': testDrive();    break;
-#if BENCH_FRONT_ONLY || BENCH_NO_GYRO
-      case 'l': case 'r': case 'u':
-        Serial.println("Turn tests need the gyro: not available in bench mode.");
-        break;
+#if BENCH_FRONT_ONLY
       case 'g': testGo();       break;
-#else
+#endif
       case 'l': testTurn(90);   return;
       case 'r': testTurn(-90);  return;
       case 'u': testTurn(180);  return;
-#endif
-      case 'c': Serial.println(g_.calibrate(GYRO_CAL_MS) ? "Gyro calibrated." : "Gyro calibration failed."); break;
       case 'f': testStepper();  break;
       case '?': printHelp();    break;
       default:  break;          // ignore CR/LF/space/garbage
@@ -333,30 +332,19 @@ void Navigator::testMotors() {
 }
 
 void Navigator::testDrive() {
-  Serial.println("Driving straight for 1 s at BASE_SPEED - measure the distance in mm...");
-  g_.resetHeading();
-  headingTarget_ = 0;
+  Serial.println("Driving straight for 1 s at BASE_SPEED - measure the distance in mm, and note "
+                 "which way it veers...");
   const uint32_t t0 = millis();
-  while (millis() - t0 < 1000) {
-    g_.update(); s_.update();
-    driveHeading(BASE_SPEED);
-    delay(5);
-  }
+  while (millis() - t0 < 1000) { s_.update(); m_.drive(BASE_SPEED, BASE_SPEED); delay(5); }
   m_.brake();
-  Serial.printf("Done. Gyro heading drifted %.1f deg (should be ~0 with gyro hold).\n"
-                "Set CRUISE_MM_S in Config.h to the distance you measured (mm per second).\n",
-                g_.heading());
+  Serial.println("Done. Set CRUISE_MM_S in Config.h to the distance you measured (mm per second).\n"
+                 "If it veered, nudge MOTOR_TRIM_LEFT / MOTOR_TRIM_RIGHT (e.g. 0.97) so it goes straight.");
 }
 
 void Navigator::testTurn(float deg) {
-  g_.resetHeading();
-  turnTarget_   = deg;                           // exact, not snapped: we want the raw accuracy
-  m_.brake();
-  turnBegin_    = millis() + BRAKE_MS;
-  turnDeadline_ = turnBegin_ + TURN_TIMEOUT_MS;
-  settle_       = 0;
-  testTurn_     = true;
-  state_        = State::TURNING;
+  Serial.printf("Timed turn of %.0f degrees (%s)...\n", deg, deg >= 0 ? "left" : "right");
+  testTurn_ = true;
+  startSpin(millis(), deg);
 }
 
 // Bench: drive straight until the front ToF sees a wall (or 4 s pass).
@@ -364,7 +352,7 @@ void Navigator::testGo() {
   Serial.printf("Driving forward; stops below %d mm or after 4 s. Keep a hand ready.\n", BENCH_STOP_MM);
   const uint32_t t0 = millis();
   while (millis() - t0 < 4000) {
-    g_.update(); s_.update();
+    s_.update();
     if (!s_.fresh(SENSOR_STALE_MS)) {
       if (millis() - t0 > 500) { Serial.println("Front sensor went silent - STOP"); break; }
       m_.stop(); delay(5); continue;                  // wait for the first reading
