@@ -22,6 +22,11 @@
 constexpr int BENCH_STOP_MM = 120;     // 'g' stops when the front reads below this
 
 // ===========================================================================
+//  0. Change the speed of the robot (for testing)
+// ===========================================================================
+constexpr float MOTOR_SPEED_SCALE = 1.00f;   // 1.0 = normal, 0.6 = 60 % speed
+
+// ===========================================================================
 //  1. MEASURE YOUR ROBOT AND MAZE  (the rest of the geometry is derived)
 // ===========================================================================
 // Clear width of a corridor: inside face of one wall to inside face of the other.
@@ -66,11 +71,11 @@ constexpr int PIN_XSHUT_FRONT  = 26;   // sensor its own I2C address at boot)
 constexpr int PIN_XSHUT_RIGHT  = 27;
 
 // L298N - left motor
-constexpr int PIN_ENA = 14;            // PWM (remove the ENA jumper cap!)
+// ENA / ENB are NOT used: keep the two jumper caps ON (enable tied to 5 V) and
+// do not wire the ESP32 to them. Speed is PWM on the IN pins below.
 constexpr int PIN_IN1 = 32;
 constexpr int PIN_IN2 = 33;
 // L298N - right motor
-constexpr int PIN_ENB = 13;            // PWM (remove the ENB jumper cap!)
 constexpr int PIN_IN3 = 18;
 constexpr int PIN_IN4 = 19;
 
@@ -90,9 +95,15 @@ constexpr int PIN_STEP_IN4 = 23;
 // Flip these if a wheel spins the wrong way (check with the  m  command).
 constexpr bool MOTOR_LEFT_INVERT  = false;
 constexpr bool MOTOR_RIGHT_INVERT = false;
-// Scale a side if the robot drifts on a straight (1.0 = no change).
-constexpr float MOTOR_TRIM_LEFT   = 1.00f;
+
+// Scale a side if the robot drifts on a straight line (1.0 = no change).
+constexpr float MOTOR_TRIM_LEFT   = 0.20f;
 constexpr float MOTOR_TRIM_RIGHT  = 1.00f;
+
+// Scale a side if the robot spins on the spot (1.0 = no change).
+constexpr float MOTOR_TURN_TRIM_LEFT  = 0.20f;
+constexpr float MOTOR_TURN_TRIM_RIGHT = 1.00f;
+
 // Dead-band: any non-zero command is lifted to at least this PWM duty.
 constexpr int   MOTOR_MIN_PWM     = 60;
 
@@ -105,7 +116,9 @@ constexpr uint32_t START_DELAY_MS  = 3000;     // time to take your hand away
 #define MM_MAX_RUN_MS 300000                    // (the simulator overrides this)
 #endif
 constexpr uint32_t MAX_RUN_MS      = MM_MAX_RUN_MS;   // hard stop if the end-zone is never seen
-constexpr uint32_t SENSOR_STALE_MS = 250;      // stop if a ToF goes silent this long
+constexpr uint32_t TOF_I2C_HZ      = 100000;   // 100 kHz: far more tolerant of long/loose wires than 400 kHz
+constexpr uint32_t SENSOR_PAUSE_MS = 120;      // a ToF silent this long: brake and wait (the driver resets it)
+constexpr uint32_t SENSOR_STALE_MS = 3000;     // still silent after this long: give up (FAULT)
 
 // ---------------------------------------------------------------- ToF -------
 constexpr int      TOF_MAX_MM       = 1000;    // readings beyond this = "far"

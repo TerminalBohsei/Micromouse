@@ -3,6 +3,34 @@
 #include <Arduino.h>
 #include <math.h>
 
+namespace {
+// Same clamp as Motors::drive, so the timers stretch exactly as much as the wheels slow.
+inline float speedScale() {
+  return MOTOR_SPEED_SCALE < 0.30f ? 0.30f : (MOTOR_SPEED_SCALE > 1.0f ? 1.0f : MOTOR_SPEED_SCALE);
+}
+}  // namespace
+
+// ---- Automatic wheel test ---------------------------------------------------
+// 1 = a few seconds after power-up the robot drives both wheels forward by
+// itself for AUTO_DRIVE_MS, then stops. Press BOOT or send any character over
+// serial to stop it at once. Set to 0 for the real maze run.
+#ifndef BENCH_AUTO_DRIVE
+#define BENCH_AUTO_DRIVE 0
+#endif
+constexpr uint32_t AUTO_DRIVE_DELAY_MS = 3000;   // time to get your hands away
+constexpr uint32_t AUTO_DRIVE_MS       = 2500;   // how long the wheels run
+
+// ---- What BOOT / the  s  key starts -----------------------------------------
+// 1 = WANDER: drive on forever, steer between walls, and when a wall is ahead
+//     turn toward whichever side is open (U-turn if neither). BOOT again stops it.
+// 0 = the maze run (left-hand wall following, stops at the finish line).
+// Either way:  w  starts wander and  M  starts the maze run from the keyboard.
+#ifndef RUN_WANDER
+#define RUN_WANDER 0      // 0 = BOOT starts the maze run (stops at the white end-zone)
+#endif
+constexpr int WANDER_TURN_MM       = 100;   // wall closer than this ahead -> turn
+constexpr int WANDER_SIDE_CLEAR_MM = 130;   // a side reading above this counts as open
+
 Navigator::Navigator(Sensors& s, Motors& m, Stepper& st)
     : s_(s), m_(m), st_(st) {
   thr_ = { SIDE_OPEN_MM, FRONT_BLOCKED_MM };
@@ -14,6 +42,10 @@ void Navigator::begin() {
   pinMode(PIN_LED, OUTPUT);
   floor_.begin();
   m_.stop();
+#if BENCH_AUTO_DRIVE
+  autoAt_ = millis() + AUTO_DRIVE_DELAY_MS;
+  Serial.println("AUTO WHEEL TEST: wheels will run in 3 s (BOOT button stops it).");
+#endif
   state_ = State::WAIT_START;
   armed_ = false;
   Serial.printf("Ready. Corridor %d mm -> wall target %d mm, opening > %d mm, advance %d mm.\n",
@@ -34,6 +66,20 @@ void Navigator::update() {
   s_.update();      // non-blocking
   st_.update();     // non-blocking
 
+  // End-zone check on EVERY pass of the loop (not only every 10 ms tick), so the wheels
+  // are told to stop within a few ms of the IR sensor confirming the change.
+  if (IR_ENABLED && !wander_ &&
+      (state_ == State::FOLLOW || state_ == State::ADVANCE ||
+       (state_ == State::TURNING && !testTurn_))) {
+    const uint32_t t = millis();
+    floor_.update(t);
+    if (floor_.finishDetected()) {
+      Serial.printf("IR: floor reading is %d, at the start it was %d -> end-zone\n", floor_.raw(), floor_.baseline());
+      finish(t, "end-zone");
+      return;
+    }
+  }
+
   const uint32_t now = millis();
   if (now - lastTick_ < LOOP_MS) return;
   lastTick_ = now;
@@ -44,13 +90,23 @@ void Navigator::update() {
     case State::FOLLOW:     follow(now);    break;
     case State::ADVANCE:    advance(now);   break;
     case State::TURNING:    turning(now);   break;
+    case State::WANDER:     wander(now);    break;
     case State::FINISHED:
     case State::FAULT:
+      if (state_ == State::FAULT && sensorFault_ && s_.fresh(SENSOR_PAUSE_MS)) {   // sensors came back: carry on
+        sensorFault_ = false;
+        errValid_    = false;
+        leftOpen_    = false;
+        state_       = wander_ ? State::WANDER : State::FOLLOW;
+        Serial.println("Sensors are back - resuming.");
+        break;
+      }
       blink(now, state_ == State::FINISHED ? 150 : 60);
       if (digitalRead(PIN_START) == LOW) {            // BOOT again = back to idle
         m_.stop();
         state_ = State::WAIT_START;
         armed_ = false;
+        sensorFault_ = false;
         Serial.println("Back to idle.");
       }
       break;
@@ -75,23 +131,29 @@ void Navigator::waitStart(uint32_t now) {
   m_.stop();
   blink(now, 500);
   console();                                        // may start a bench test or set state_
+#if BENCH_AUTO_DRIVE
+  if (autoAt_ && now >= autoAt_) { autoAt_ = 0; autoDrive(); }
+#endif
 
   if (state_ != State::WAIT_START) return;
   const bool pressed = digitalRead(PIN_START) == LOW;
   if (!armed_) { if (!pressed) armed_ = true; return; }
-  if (pressed) beginCountdown(now);
+  if (pressed) beginCountdown(now, RUN_WANDER != 0);
 }
 
-void Navigator::beginCountdown(uint32_t now) {
+void Navigator::beginCountdown(uint32_t now, bool wanderMode) {
+  autoAt_ = 0;                                      // a real run replaces the wheel test
 #if BENCH_FRONT_ONLY
   (void)now;
   Serial.println("Bench mode: the maze run needs all three ToF sensors. Use m, d or g. "
                  "(Set BENCH_FRONT_ONLY to 0 in Config.h for the real run.)");
   return;
 #endif
+  wander_       = wanderMode;
   countdownEnd_ = now + START_DELAY_MS;
   state_ = State::COUNTDOWN;
-  Serial.println("Starting - take your hands away and keep the robot still!");
+  Serial.println(wanderMode ? "Starting WANDER in 3 s - press BOOT (or any key) to stop it."
+                            : "Starting the maze run - take your hands away and keep the robot still!");
 }
 
 void Navigator::countdown(uint32_t now) {
@@ -114,7 +176,9 @@ void Navigator::countdown(uint32_t now) {
   leftOpen_      = false;
   startMs_       = millis();
   lastTurnEnd_   = startMs_ - TURN_COOLDOWN_MS;
-  state_         = State::FOLLOW;
+  btnReleased_   = digitalRead(PIN_START) != LOW;
+  btnDownTicks_  = 0;
+  state_         = wander_ ? State::WANDER : State::FOLLOW;
   Serial.println("GO");
 }
 
@@ -124,6 +188,9 @@ void Navigator::finish(uint32_t now, const char* why) {
   finishWhy_ = why;
   state_     = State::FINISHED;
   st_.moveSteps(STEPPER_FINISH_STEPS);
+  if (floor_.finishDetected())
+    Serial.printf("IR changed %lu ms before the wheels were told to stop.\n",
+                  (unsigned long)(now - floor_.firstDiffMs()));
   Serial.printf("FINISHED (%s) in %lu ms\n", why, (unsigned long)finishMs_);
 }
 
@@ -134,14 +201,68 @@ void Navigator::fault(const char* why) {
 }
 
 // Safety, time limit and end-zone detection. Returns false once stopped.
-bool Navigator::running(uint32_t now) {
-  if (!s_.fresh(SENSOR_STALE_MS)) { fault("ToF sensor stopped responding"); return false; }
+bool Navigator::running(uint32_t now, bool pauseOnSilence) {
+  if (pauseOnSilence && !s_.fresh(SENSOR_PAUSE_MS)) {                 // a sensor went quiet: stop and let it be reset
+    m_.brake();
+    if (!paused_) {
+      paused_ = true;
+      Serial.printf("PAUSE: a ToF sensor gave no reading for %u ms (I2C trouble, not the IR sensor)\n",
+                    (unsigned)SENSOR_PAUSE_MS);
+    }
+    if (!s_.fresh(SENSOR_STALE_MS)) { sensorFault_ = true; fault("ToF sensor stopped responding"); }
+    return false;
+  }
+  if (paused_) { paused_ = false; Serial.println("RESUME: ToF sensors are answering again"); }
+  if (!s_.fresh(SENSOR_STALE_MS)) { sensorFault_ = true; fault("ToF sensor stopped responding"); return false; }
+  if (wander_) return true;                         // wander never ends by itself
   if (now - startMs_ > MAX_RUN_MS) { finish(now, "time limit"); return false; }
   if (IR_ENABLED) {
     floor_.update(now);
     if (floor_.finishDetected()) { finish(now, "end-zone"); return false; }
   }
   return true;
+}
+
+// ----------------------------------------------------------------- wander ---
+// BOOT pressed again (after being released), or any key over serial.
+bool Navigator::stopRequested() {
+  bool req = false;
+  if (digitalRead(PIN_START) != LOW) { btnReleased_ = true; btnDownTicks_ = 0; }
+  else if (btnReleased_ && ++btnDownTicks_ >= 3) req = true;     // held ~30 ms: not a bounce
+  if (Serial.available()) { while (Serial.available()) Serial.read(); req = true; }
+  return req;
+}
+
+void Navigator::stopRun(const char* why) {
+  m_.brake();
+  pause(250);
+  m_.stop();
+  wander_ = false;
+  state_  = State::WAIT_START;
+  armed_  = false;                                  // let go of BOOT before it can start again
+  Serial.printf("%s. Press BOOT to start again.\n", why);
+}
+
+// Drive on, steer between the walls; when a wall is ahead turn toward the open side.
+void Navigator::wander(uint32_t now) {
+  if (stopRequested()) { stopRun("Stopped"); return; }
+  if (!running(now)) return;
+  if (now - lastTurnEnd_ < POST_TURN_MS) { m_.brake(); return; }
+
+  const Ranges r = s_.ranges();
+  if (r.front < WANDER_TURN_MM) {
+    const bool leftClear  = r.left  >= WANDER_SIDE_CLEAR_MM;
+    const bool rightClear = r.right >= WANDER_SIDE_CLEAR_MM;
+    if (leftClear && (!rightClear || r.left >= r.right)) pending_ = Action::TURN_LEFT;
+    else if (rightClear)                                 pending_ = Action::TURN_RIGHT;
+    else                                                 pending_ = Action::TURN_AROUND;
+    Serial.printf("Wall ahead (%d mm), L=%d R=%d -> %s\n", r.front, r.left, r.right,
+                  pending_ == Action::TURN_LEFT ? "turn left" :
+                  pending_ == Action::TURN_RIGHT ? "turn right" : "turn around");
+    beginTurn(now);
+    return;
+  }
+  driveWalls(r);
 }
 
 // ----------------------------------------------------------------- follow ---
@@ -182,7 +303,7 @@ void Navigator::beginAdvance(uint32_t now, const Ranges& r) {
   // and always the safety cap.
   advanceFront0_   = r.front;
   advanceViaFront_ = ADVANCE_USE_FRONT_TOF && r.front < (TOF_MAX_MM - 100);
-  const uint32_t nominalMs = (uint32_t)ADVANCE_MM * 1000UL / CRUISE_MM_S;
+  const uint32_t nominalMs = (uint32_t)((float)ADVANCE_MM * 1000.0f / ((float)CRUISE_MM_S * speedScale()));
   advanceEnd_ = now + (advanceViaFront_ ? nominalMs * ADVANCE_TIMEOUT_PCT / 100 : nominalMs);
   state_ = State::ADVANCE;
 }
@@ -211,12 +332,13 @@ void Navigator::startSpin(uint32_t now, float deg) {
   const bool half = fabsf(deg) > 135.0f;                    // 180
   m_.brake();
   turnBegin_ = now + BRAKE_MS;                              // let the robot stop first
-  turnEnd_   = turnBegin_ + (half ? TURN_180_MS : TURN_90_MS);
+  turnEnd_   = turnBegin_ + (uint32_t)((float)(half ? TURN_180_MS : TURN_90_MS) / speedScale());
   state_     = State::TURNING;
 }
 
 void Navigator::turning(uint32_t now) {
-  if (!testTurn_ && !running(now)) return;
+  if (wander_ && stopRequested()) { stopRun("stopped"); return; }
+  if (!testTurn_ && !running(now, false)) return;   // a spin never waits for the sensors
   if (now < turnBegin_) return;                 // still braking
 
   if (now < turnEnd_) {
@@ -237,7 +359,7 @@ void Navigator::turning(uint32_t now) {
   leftOpen_    = false;
   errValid_    = false;
   s_.restart();                                 // drop readings taken while rotating
-  state_       = State::FOLLOW;
+  state_       = wander_ ? State::WANDER : State::FOLLOW;
 }
 
 // ---------------------------------------------------------------- driving ---
@@ -289,6 +411,9 @@ void Navigator::driveWalls(const Ranges& r, bool slowForFront) {
 // ------------------------------------------------------------ bench tests ---
 void Navigator::printHelp() {
   Serial.println("Bench tests (idle only, wheels OFF the ground for m):\n"
+                 "  R  each wheel alone, then both together, at full power (finds a dead wheel)\n"
+                 "  D  same, but plain ON/OFF with no PWM (tells wiring from PWM problems)\n"
+                 "  1/2  left wheel 10% slower/faster    3/4  right wheel 10% slower/faster (then test with d)\n"
                  "  s  start the run          m  spin each wheel (check direction)\n"
                  "  d  drive straight 1 s     l/r/u  turn 90 left / 90 right / 180 (timed)\n"
                  "  f  stepper test           ?  this help\n"
@@ -304,9 +429,18 @@ void Navigator::console() {
   while (Serial.available()) {
     const char c = (char)Serial.read();
     switch (c) {
-      case 's': beginCountdown(millis()); return;
+      case 's': beginCountdown(millis(), RUN_WANDER != 0); return;
+      case 'w': beginCountdown(millis(), true);  return;
+      case 'M': beginCountdown(millis(), false); return;
       case 'm': testMotors();   break;
+      case 'a': autoDrive();    break;
+      case 'R': testWheels();   break;
+      case 'D': m_.rawTest(1500); Serial.println("Done. Which of the five moved?"); break;
       case 'd': testDrive();    break;
+      case '1': adjustTrim(0.90f, 1.0f);   break;   // left 10 % slower
+      case '2': adjustTrim(1.10f, 1.0f);   break;   // left 10 % faster
+      case '3': adjustTrim(1.0f, 0.90f);   break;   // right 10 % slower
+      case '4': adjustTrim(1.0f, 1.10f);   break;   // right 10 % faster
 #if BENCH_FRONT_ONLY
       case 'g': testGo();       break;
 #endif
@@ -318,6 +452,18 @@ void Navigator::console() {
       default:  break;          // ignore CR/LF/space/garbage
     }
   }
+}
+
+// Live speed balance between the two wheels. Keys: 1/2 = left slower/faster,
+// 3/4 = right slower/faster. Each press changes that wheel by 10 % of its CURRENT
+// trim, so it works for tiny values too. Test with  d  (drive straight for 1 s).
+void Navigator::adjustTrim(float fl, float fr) {
+  auto clampTrim = [](float v) { return v < 0.01f ? 0.01f : (v > 1.50f ? 1.50f : v); };
+  const float l = clampTrim(m_.trimLeft()  * fl);
+  const float r = clampTrim(m_.trimRight() * fr);
+  m_.setTrim(l, r);
+  Serial.printf("Trim now LEFT %.3f  RIGHT %.3f   (test with  d ; when it drives straight, put these in "
+                "Config.h: MOTOR_TRIM_LEFT = %.3ff, MOTOR_TRIM_RIGHT = %.3ff)\n", l, r, l, r);
 }
 
 void Navigator::testMotors() {
@@ -353,7 +499,7 @@ void Navigator::testGo() {
   const uint32_t t0 = millis();
   while (millis() - t0 < 4000) {
     s_.update();
-    if (!s_.fresh(SENSOR_STALE_MS)) {
+    if (!s_.fresh(SENSOR_PAUSE_MS)) {
       if (millis() - t0 > 500) { Serial.println("Front sensor went silent - STOP"); break; }
       m_.stop(); delay(5); continue;                  // wait for the first reading
     }
@@ -364,6 +510,51 @@ void Navigator::testGo() {
   }
   m_.brake();
   Serial.println("Stopped.");
+}
+
+// Both wheels forward for AUTO_DRIVE_MS, then stop. BOOT or any serial byte stops it early.
+void Navigator::autoDrive() {
+  Serial.println("Wheels ON - BOOT button (or any key) stops them.");
+  while (Serial.available()) Serial.read();         // throw away old keystrokes
+  const uint32_t t0 = millis();
+  bool pressedAtStart = digitalRead(PIN_START) == LOW;
+  while (millis() - t0 < AUTO_DRIVE_MS) {
+    s_.update();
+    if (Serial.available()) { Serial.println("Stopped by serial key."); break; }
+    if (digitalRead(PIN_START) == LOW) { if (!pressedAtStart) { Serial.println("Stopped by BOOT button."); break; } }
+    else pressedAtStart = false;
+    m_.drive(BASE_SPEED, BASE_SPEED);
+    delay(5);
+  }
+  m_.brake();
+  delay(300);
+  m_.stop();
+  while (Serial.available()) Serial.read();
+  Serial.println("Wheels OFF. Type  a  to run them again.");
+}
+
+// Finds a dead wheel: each motor on its own at full power, forward then backward.
+void Navigator::testWheels() {
+  Serial.printf("Pins: LEFT motor = IN1 GPIO%d, IN2 GPIO%d | RIGHT motor = IN3 GPIO%d, IN4 GPIO%d "
+                "(ENA/ENB jumper caps stay ON, no ESP32 wires to them)\n",
+                PIN_IN1, PIN_IN2, PIN_IN3, PIN_IN4);
+  struct Step { const char* name; float l, r; };
+  const Step steps[] = {
+    {"LEFT wheel FORWARD (full power)",   255,   0},
+    {"LEFT wheel BACKWARD (full power)", -255,   0},
+    {"RIGHT wheel FORWARD (full power)",    0, 255},
+    {"RIGHT wheel BACKWARD (full power)",   0,-255},
+    {"BOTH wheels FORWARD together",      255, 255},
+    {"BOTH wheels BACKWARD together",    -255,-255},
+  };
+  for (const Step& st : steps) {
+    Serial.printf("%s ...\n", st.name);
+    m_.drive(st.l, st.r);
+    pause(1500);
+    m_.stop();
+    pause(500);
+  }
+  Serial.println("Done. Which of the six moved?");
 }
 
 void Navigator::testStepper() {

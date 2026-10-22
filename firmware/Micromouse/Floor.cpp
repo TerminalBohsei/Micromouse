@@ -30,8 +30,10 @@ bool FloorSensor::differs(int v) const {
 void FloorSensor::update(uint32_t nowMs) {
   if (detected_) return;
   if (differs(raw())) {
-    if (!active_) { active_ = true; since_ = nowMs; }
-    else if (nowMs - since_ >= IR_CONFIRM_MS) detected_ = true;
+    if (!active_) { active_ = true; since_ = nowMs; diffCount_ = 0; }
+    diffCount_++;
+    // Time AND a minimum number of consecutive samples: a flicker cannot trigger it.
+    if (nowMs - since_ >= IR_CONFIRM_MS && diffCount_ >= 8) detected_ = true;
   } else {
     active_ = false;
   }

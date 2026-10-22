@@ -13,7 +13,8 @@ enum class State : uint8_t {
   ADVANCE,      // driving on a little before a left turn
   TURNING,      // spinning on the spot for a fixed time
   FINISHED,     // end-zone reached (or time limit)
-  FAULT         // sensor failure - stopped for safety
+  FAULT,        // sensor failure - stopped for safety
+  WANDER        // endless obstacle-avoiding drive (BOOT starts it, BOOT stops it)
 };
 
 class Navigator {
@@ -34,8 +35,11 @@ class Navigator {
   void turning(uint32_t now);
 
   // helpers
-  bool running(uint32_t now);        // safety + end-zone checks; false = stopped
-  void beginCountdown(uint32_t now);
+  bool running(uint32_t now, bool pauseOnSilence = true);        // safety + end-zone checks; false = stopped
+  void beginCountdown(uint32_t now, bool wanderMode);
+  void wander(uint32_t now);
+  bool stopRequested();                              // BOOT pressed again, or any serial key
+  void stopRun(const char* why);
   void beginAdvance(uint32_t now, const Ranges& r);
   void beginTurn(uint32_t now);
   void startSpin(uint32_t now, float deg);          // + = left
@@ -55,6 +59,9 @@ class Navigator {
   void testTurn(float deg);
   void testStepper();
   void testGo();
+  void autoDrive();
+  void testWheels();
+  void adjustTrim(float fl, float fr);   // multiply each side's trim by these factors
   void pause(uint32_t ms);           // wait while keeping the sensors updating
 
   Sensors& s_;
@@ -81,5 +88,11 @@ class Navigator {
   bool    leftOpen_      = false;
   bool    advanceViaFront_ = false;
   bool    armed_         = false;    // start button must be released before it counts
+  bool     wander_       = false;    // endless wander mode (no end-zone, no time limit)
+  bool     btnReleased_  = false;    // BOOT has been released since the run started
+  uint8_t  btnDownTicks_ = 0;
+  uint32_t autoAt_       = 0;        // when the automatic wheel test starts (0 = never)
+  bool    paused_        = false;    // waiting for a silent ToF sensor (message printed once)
+  bool    sensorFault_   = false;    // the FAULT was a sensor dropout: resume when they return
   bool    testTurn_      = false;    // a console turn test is running
 };
