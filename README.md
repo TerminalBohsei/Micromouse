@@ -1,5 +1,6 @@
 # Micromouse
 USYD Micromouse competition
+<img width="7008" height="4672" alt="DSC09850" src="https://github.com/user-attachments/assets/4987b76b-24a8-4950-a0bd-f67979e6d88f" />
 
 ## Overview
 A self-guiding robot designed to navigate a maze-course via **Time of Flight (ToF)** sensors and **gyroscope** sensors to determine its surrounding, orientation, and position. Sensor data is then processed by an **ESP32**, which uses an algorithm that prioritises following the left-hand wall to guide the robot through the course. Where, the end-zone is indicated by a different colour.
